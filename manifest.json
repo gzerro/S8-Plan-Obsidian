@@ -1,0 +1,10 @@
+{
+  "id": "s8-plan",
+  "name": "S8 Plan",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Mobile-first weekly planner with recurring weekday tasks and monthly progress.",
+  "author": "gzerro",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}

@@ -1,0 +1,21 @@
+{
+  "name": "s8-plan",
+  "version": "0.1.0",
+  "description": "Mobile-first weekly planner Obsidian plugin",
+  "main": "main.js",
+  "scripts": {
+    "build": "node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs"
+  },
+  "keywords": [
+    "obsidian",
+    "plugin",
+    "planner"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "esbuild": "^0.25.4",
+    "obsidian": "latest",
+    "typescript": "^5.9.3"
+  }
+}
