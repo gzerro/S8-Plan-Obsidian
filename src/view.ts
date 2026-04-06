@@ -42,12 +42,14 @@ export class WeeklyPlannerView extends ItemView {
     return 'calendar-days';
   }
 
-  async onOpen(): Promise<void> {
+  onOpen(): Promise<void> {
     this.render();
+    return Promise.resolve();
   }
 
-  async onClose(): Promise<void> {
+  onClose(): Promise<void> {
     this.contentEl.empty();
+    return Promise.resolve();
   }
 
   setCurrentWeekStart(date: Date): void {
@@ -170,9 +172,15 @@ export class WeeklyPlannerView extends ItemView {
           this.dayCollapseOverrides.set(targetIso, !current);
           this.render();
         },
-        onToggleTask: async (taskId, toggleDate) => {
-          await this.plugin.store.toggleTaskCompletion(taskId, toggleDate);
-          this.render();
+        onToggleTask: (taskId, toggleDate) => {
+          void this.plugin.store
+            .toggleTaskCompletion(taskId, toggleDate)
+            .then(() => {
+              this.render();
+            })
+            .catch((error) => {
+              console.error('Failed to toggle task completion', error);
+            });
         }
       });
     });

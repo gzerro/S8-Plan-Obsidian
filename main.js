@@ -421,10 +421,10 @@ var PlannerSettingTab = class extends import_obsidian.PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     const language = this.plugin.store.getLanguage();
-    containerEl.createEl("h2", { text: t(language, "weeklyPlannerSettings") });
+    new import_obsidian.Setting(containerEl).setName(t(language, "weeklyPlannerSettings")).setHeading();
     this.renderLanguageSetting(containerEl, language);
     this.renderCreateTask(containerEl, language);
-    containerEl.createEl("h3", { text: t(language, "tasks") });
+    new import_obsidian.Setting(containerEl).setName(t(language, "tasks")).setHeading();
     const tasks = this.plugin.store.getTasks();
     if (tasks.length === 0) {
       containerEl.createDiv({ cls: "wp-empty", text: t(language, "noTasksYet") });
@@ -432,25 +432,33 @@ var PlannerSettingTab = class extends import_obsidian.PluginSettingTab {
     }
     tasks.forEach((task, index) => this.renderTaskCard(containerEl, task, index, tasks.length, language));
   }
+  runAsync(action) {
+    void action().catch((error) => {
+      console.error("Planner settings action failed", error);
+    });
+  }
+  async applyLanguage(language) {
+    await this.plugin.store.setLanguage(language);
+    this.plugin.refreshViews();
+    this.display();
+  }
   renderLanguageSetting(containerEl, language) {
     new import_obsidian.Setting(containerEl).setName(t(language, "language")).setDesc(t(language, "languageDescription")).addDropdown((dropdown) => {
       dropdown.addOption("en", t(language, "english"));
       dropdown.addOption("ru", t(language, "russian"));
       dropdown.setValue(language);
-      dropdown.onChange(async (value) => {
+      dropdown.onChange((value) => {
         if (value !== "en" && value !== "ru") {
           return;
         }
-        await this.plugin.store.setLanguage(value);
-        await this.plugin.refreshViews();
-        this.display();
+        this.runAsync(() => this.applyLanguage(value));
       });
     });
   }
   renderCreateTask(containerEl, language) {
     let draftTitle = "";
     let draftWeekdays = [];
-    containerEl.createEl("h3", { text: t(language, "createTask") });
+    new import_obsidian.Setting(containerEl).setName(t(language, "createTask")).setHeading();
     new import_obsidian.Setting(containerEl).setName(t(language, "taskTitle")).addText(
       (text) => text.setPlaceholder(t(language, "taskTitlePlaceholder")).onChange((value) => {
         draftTitle = value;
@@ -470,10 +478,12 @@ var PlannerSettingTab = class extends import_obsidian.PluginSettingTab {
       });
     });
     new import_obsidian.Setting(containerEl).setName(t(language, "actions")).addButton(
-      (button) => button.setButtonText(t(language, "addTask")).onClick(async () => {
-        await this.plugin.store.addTask(draftTitle, draftWeekdays);
-        await this.plugin.refreshViews();
-        this.display();
+      (button) => button.setButtonText(t(language, "addTask")).onClick(() => {
+        this.runAsync(async () => {
+          await this.plugin.store.addTask(draftTitle, draftWeekdays);
+          this.plugin.refreshViews();
+          this.display();
+        });
       })
     );
   }
@@ -504,33 +514,41 @@ var PlannerSettingTab = class extends import_obsidian.PluginSettingTab {
     });
     const controls = card.createDiv({ cls: "wp-controls" });
     const saveBtn = controls.createEl("button", { text: t(language, "save") });
-    saveBtn.addEventListener("click", async () => {
-      await this.plugin.store.updateTask(task.id, {
-        title: draftTitle,
-        weekdays: draftWeekdays
+    saveBtn.addEventListener("click", () => {
+      this.runAsync(async () => {
+        await this.plugin.store.updateTask(task.id, {
+          title: draftTitle,
+          weekdays: draftWeekdays
+        });
+        this.plugin.refreshViews();
+        this.display();
       });
-      await this.plugin.refreshViews();
-      this.display();
     });
     const deleteBtn = controls.createEl("button", { text: t(language, "delete") });
-    deleteBtn.addEventListener("click", async () => {
-      await this.plugin.store.deleteTask(task.id);
-      await this.plugin.refreshViews();
-      this.display();
+    deleteBtn.addEventListener("click", () => {
+      this.runAsync(async () => {
+        await this.plugin.store.deleteTask(task.id);
+        this.plugin.refreshViews();
+        this.display();
+      });
     });
     const upBtn = controls.createEl("button", { text: t(language, "moveUp") });
     upBtn.disabled = index === 0;
-    upBtn.addEventListener("click", async () => {
-      await this.plugin.store.moveTask(task.id, "up");
-      await this.plugin.refreshViews();
-      this.display();
+    upBtn.addEventListener("click", () => {
+      this.runAsync(async () => {
+        await this.plugin.store.moveTask(task.id, "up");
+        this.plugin.refreshViews();
+        this.display();
+      });
     });
     const downBtn = controls.createEl("button", { text: t(language, "moveDown") });
     downBtn.disabled = index === total - 1;
-    downBtn.addEventListener("click", async () => {
-      await this.plugin.store.moveTask(task.id, "down");
-      await this.plugin.refreshViews();
-      this.display();
+    downBtn.addEventListener("click", () => {
+      this.runAsync(async () => {
+        await this.plugin.store.moveTask(task.id, "down");
+        this.plugin.refreshViews();
+        this.display();
+      });
     });
   }
 };
@@ -677,11 +695,13 @@ var WeeklyPlannerView = class extends import_obsidian2.ItemView {
   getIcon() {
     return "calendar-days";
   }
-  async onOpen() {
+  onOpen() {
     this.render();
+    return Promise.resolve();
   }
-  async onClose() {
+  onClose() {
     this.contentEl.empty();
+    return Promise.resolve();
   }
   setCurrentWeekStart(date) {
     this.weekStart = startOfWeekMonday(date);
@@ -784,9 +804,12 @@ var WeeklyPlannerView = class extends import_obsidian2.ItemView {
           this.dayCollapseOverrides.set(targetIso, !current);
           this.render();
         },
-        onToggleTask: async (taskId, toggleDate) => {
-          await this.plugin.store.toggleTaskCompletion(taskId, toggleDate);
-          this.render();
+        onToggleTask: (taskId, toggleDate) => {
+          void this.plugin.store.toggleTaskCompletion(taskId, toggleDate).then(() => {
+            this.render();
+          }).catch((error) => {
+            console.error("Failed to toggle task completion", error);
+          });
         }
       });
     });
@@ -823,20 +846,19 @@ var WeeklyPlannerPlugin = class extends import_obsidian3.Plugin {
     await this.store.load();
     const language = this.store.getLanguage();
     this.registerView(this.viewType, (leaf) => new WeeklyPlannerView(leaf, this));
-    this.addRibbonIcon("calendar-days", t(language, "openWeeklyPlanner"), async () => {
-      await this.openPlannerView();
+    this.addRibbonIcon("calendar-days", t(language, "openWeeklyPlanner"), () => {
+      void this.openPlannerView();
     });
     this.addCommand({
       id: "open-weekly-planner",
       name: t(language, "openWeeklyPlanner"),
-      callback: async () => {
-        await this.openPlannerView();
+      callback: () => {
+        void this.openPlannerView();
       }
     });
     this.addSettingTab(new PlannerSettingTab(this));
   }
-  async onunload() {
-    this.app.workspace.detachLeavesOfType(this.viewType);
+  onunload() {
   }
   async openPlannerView() {
     const language = this.store.getLanguage();
@@ -858,7 +880,7 @@ var WeeklyPlannerPlugin = class extends import_obsidian3.Plugin {
       new import_obsidian3.Notice(t(language, "couldNotOpenWeeklyPlannerView", { details }));
     }
   }
-  async refreshViews() {
+  refreshViews() {
     const leaves = this.app.workspace.getLeavesOfType(this.viewType);
     leaves.forEach((leaf) => {
       const view = leaf.view;

@@ -17,11 +17,11 @@ export class PlannerSettingTab extends PluginSettingTab {
     containerEl.empty();
     const language = this.plugin.store.getLanguage();
 
-    containerEl.createEl('h2', { text: t(language, 'weeklyPlannerSettings') });
+    new Setting(containerEl).setName(t(language, 'weeklyPlannerSettings')).setHeading();
     this.renderLanguageSetting(containerEl, language);
 
     this.renderCreateTask(containerEl, language);
-    containerEl.createEl('h3', { text: t(language, 'tasks') });
+    new Setting(containerEl).setName(t(language, 'tasks')).setHeading();
 
     const tasks = this.plugin.store.getTasks();
     if (tasks.length === 0) {
@@ -32,6 +32,18 @@ export class PlannerSettingTab extends PluginSettingTab {
     tasks.forEach((task, index) => this.renderTaskCard(containerEl, task, index, tasks.length, language));
   }
 
+  private runAsync(action: () => Promise<void>): void {
+    void action().catch((error) => {
+      console.error('Planner settings action failed', error);
+    });
+  }
+
+  private async applyLanguage(language: PlannerLanguage): Promise<void> {
+    await this.plugin.store.setLanguage(language);
+    this.plugin.refreshViews();
+    this.display();
+  }
+
   private renderLanguageSetting(containerEl: HTMLElement, language: PlannerLanguage): void {
     new Setting(containerEl)
       .setName(t(language, 'language'))
@@ -40,13 +52,11 @@ export class PlannerSettingTab extends PluginSettingTab {
         dropdown.addOption('en', t(language, 'english'));
         dropdown.addOption('ru', t(language, 'russian'));
         dropdown.setValue(language);
-        dropdown.onChange(async (value) => {
+        dropdown.onChange((value) => {
           if (value !== 'en' && value !== 'ru') {
             return;
           }
-          await this.plugin.store.setLanguage(value);
-          await this.plugin.refreshViews();
-          this.display();
+          this.runAsync(() => this.applyLanguage(value));
         });
       });
   }
@@ -55,7 +65,7 @@ export class PlannerSettingTab extends PluginSettingTab {
     let draftTitle = '';
     let draftWeekdays: number[] = [];
 
-    containerEl.createEl('h3', { text: t(language, 'createTask') });
+    new Setting(containerEl).setName(t(language, 'createTask')).setHeading();
 
     new Setting(containerEl)
       .setName(t(language, 'taskTitle'))
@@ -84,10 +94,12 @@ export class PlannerSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName(t(language, 'actions'))
       .addButton((button) =>
-        button.setButtonText(t(language, 'addTask')).onClick(async () => {
-          await this.plugin.store.addTask(draftTitle, draftWeekdays);
-          await this.plugin.refreshViews();
-          this.display();
+        button.setButtonText(t(language, 'addTask')).onClick(() => {
+          this.runAsync(async () => {
+            await this.plugin.store.addTask(draftTitle, draftWeekdays);
+            this.plugin.refreshViews();
+            this.display();
+          });
         })
       );
   }
@@ -134,36 +146,44 @@ export class PlannerSettingTab extends PluginSettingTab {
     const controls = card.createDiv({ cls: 'wp-controls' });
 
     const saveBtn = controls.createEl('button', { text: t(language, 'save') });
-    saveBtn.addEventListener('click', async () => {
-      await this.plugin.store.updateTask(task.id, {
-        title: draftTitle,
-        weekdays: draftWeekdays
+    saveBtn.addEventListener('click', () => {
+      this.runAsync(async () => {
+        await this.plugin.store.updateTask(task.id, {
+          title: draftTitle,
+          weekdays: draftWeekdays
+        });
+        this.plugin.refreshViews();
+        this.display();
       });
-      await this.plugin.refreshViews();
-      this.display();
     });
 
     const deleteBtn = controls.createEl('button', { text: t(language, 'delete') });
-    deleteBtn.addEventListener('click', async () => {
-      await this.plugin.store.deleteTask(task.id);
-      await this.plugin.refreshViews();
-      this.display();
+    deleteBtn.addEventListener('click', () => {
+      this.runAsync(async () => {
+        await this.plugin.store.deleteTask(task.id);
+        this.plugin.refreshViews();
+        this.display();
+      });
     });
 
     const upBtn = controls.createEl('button', { text: t(language, 'moveUp') });
     upBtn.disabled = index === 0;
-    upBtn.addEventListener('click', async () => {
-      await this.plugin.store.moveTask(task.id, 'up');
-      await this.plugin.refreshViews();
-      this.display();
+    upBtn.addEventListener('click', () => {
+      this.runAsync(async () => {
+        await this.plugin.store.moveTask(task.id, 'up');
+        this.plugin.refreshViews();
+        this.display();
+      });
     });
 
     const downBtn = controls.createEl('button', { text: t(language, 'moveDown') });
     downBtn.disabled = index === total - 1;
-    downBtn.addEventListener('click', async () => {
-      await this.plugin.store.moveTask(task.id, 'down');
-      await this.plugin.refreshViews();
-      this.display();
+    downBtn.addEventListener('click', () => {
+      this.runAsync(async () => {
+        await this.plugin.store.moveTask(task.id, 'down');
+        this.plugin.refreshViews();
+        this.display();
+      });
     });
   }
 }

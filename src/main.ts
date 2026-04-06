@@ -20,23 +20,23 @@ export default class WeeklyPlannerPlugin extends Plugin {
 
     this.registerView(this.viewType, (leaf) => new WeeklyPlannerView(leaf, this));
 
-    this.addRibbonIcon('calendar-days', t(language, 'openWeeklyPlanner'), async () => {
-      await this.openPlannerView();
+    this.addRibbonIcon('calendar-days', t(language, 'openWeeklyPlanner'), () => {
+      void this.openPlannerView();
     });
 
     this.addCommand({
       id: 'open-weekly-planner',
       name: t(language, 'openWeeklyPlanner'),
-      callback: async () => {
-        await this.openPlannerView();
+      callback: () => {
+        void this.openPlannerView();
       }
     });
 
     this.addSettingTab(new PlannerSettingTab(this));
   }
 
-  async onunload(): Promise<void> {
-    this.app.workspace.detachLeavesOfType(this.viewType);
+  onunload(): void {
+    // Keep user leaf placement intact between plugin reloads.
   }
 
   async openPlannerView(): Promise<void> {
@@ -61,7 +61,7 @@ export default class WeeklyPlannerPlugin extends Plugin {
     }
   }
 
-  async refreshViews(): Promise<void> {
+  refreshViews(): void {
     const leaves = this.app.workspace.getLeavesOfType(this.viewType);
     leaves.forEach((leaf) => {
       const view = leaf.view;
