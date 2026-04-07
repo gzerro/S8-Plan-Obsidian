@@ -1,5 +1,7 @@
+import { TFile } from 'obsidian';
 import type WeeklyPlannerPlugin from './main';
 import { getDatesInMonth, jsDayToWeekday, toISODate } from './date-utils';
+import { DATA_FILE_PATH } from './constants';
 import type { MonthProgress, PlannerData, PlannerLanguage, Task, TaskMonthlyProgress } from './types';
 
 const DEFAULT_DATA: PlannerData = {
@@ -7,6 +9,87 @@ const DEFAULT_DATA: PlannerData = {
   completionsByDate: {},
   language: 'en'
 };
+
+const DATA_FILE_TITLE = '# S8 Plan Data';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function parseLanguage(value: unknown): PlannerLanguage {
+  return value === 'ru' || value === 'en' ? value : DEFAULT_DATA.language;
+}
+
+function parseWeekdays(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const valid = value.filter((day): day is number => typeof day === 'number' && Number.isInteger(day) && day >= 1 && day <= 7);
+  return [...new Set(valid)].sort((a, b) => a - b);
+}
+
+function parseCompletionsByDate(value: unknown): Record<string, string[]> {
+  if (!isRecord(value)) {
+    return {};
+  }
+
+  const result: Record<string, string[]> = {};
+  Object.entries(value).forEach(([date, taskIds]) => {
+    if (!Array.isArray(taskIds)) {
+      return;
+    }
+
+    const validIds = taskIds.filter((id): id is string => typeof id === 'string');
+    if (validIds.length > 0) {
+      result[date] = [...new Set(validIds)];
+    }
+  });
+
+  return result;
+}
+
+function parseTasks(value: unknown): Task[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const tasks: Task[] = [];
+  value.forEach((entry, index) => {
+    if (!isRecord(entry)) {
+      return;
+    }
+
+    const id = typeof entry.id === 'string' ? entry.id : '';
+    const title = typeof entry.title === 'string' ? entry.title : '';
+    if (!id || !title.trim()) {
+      return;
+    }
+
+    const task: Task = {
+      id,
+      title: title.trim(),
+      weekdays: parseWeekdays(entry.weekdays),
+      order: typeof entry.order === 'number' && Number.isFinite(entry.order) ? entry.order : index
+    };
+
+    if (typeof entry.createdAt === 'string') {
+      task.createdAt = entry.createdAt;
+    }
+
+    if (typeof entry.archived === 'boolean') {
+      task.archived = entry.archived;
+    }
+
+    tasks.push(task);
+  });
+
+  return tasks;
+}
+
+function hasMeaningfulData(data: PlannerData): boolean {
+  return data.tasks.length > 0 || Object.keys(data.completionsByDate).length > 0 || data.language !== DEFAULT_DATA.language;
+}
 
 export class PlannerStore {
   private plugin: WeeklyPlannerPlugin;
@@ -17,21 +100,36 @@ export class PlannerStore {
   }
 
   async load(): Promise<void> {
-    const loaded = (await this.plugin.loadData()) as Partial<PlannerData> | null;
-    this.data = {
-      tasks: Array.isArray(loaded?.tasks) ? loaded?.tasks : [],
-      completionsByDate:
-        loaded?.completionsByDate && typeof loaded.completionsByDate === 'object'
-          ? loaded.completionsByDate
-          : {},
-      language: loaded?.language === 'ru' || loaded?.language === 'en' ? loaded.language : DEFAULT_DATA.language
-    };
+    const vaultData = await this.readVaultDataFile();
+    if (vaultData) {
+      this.data = vaultData;
+      this.normalizeOrders();
+      return;
+    }
+
+    const legacyLoaded = await this.plugin.loadData();
+    const legacyData = this.coerceData(legacyLoaded);
+    this.data = legacyData;
     this.normalizeOrders();
-    await this.save();
+
+    if (hasMeaningfulData(this.data)) {
+      await this.writeVaultDataFile();
+    }
   }
 
   async save(): Promise<void> {
-    await this.plugin.saveData(this.data);
+    await this.writeVaultDataFile();
+  }
+
+  async reloadFromDataFile(): Promise<boolean> {
+    const vaultData = await this.readVaultDataFile();
+    if (!vaultData) {
+      return false;
+    }
+
+    this.data = vaultData;
+    this.normalizeOrders();
+    return true;
   }
 
   getTasks(): Task[] {
@@ -234,6 +332,60 @@ export class PlannerStore {
     const percent = planned === 0 ? 0 : Math.round((completed / planned) * 100);
 
     return { planned, completed, percent };
+  }
+
+  private coerceData(source: unknown): PlannerData {
+    if (!isRecord(source)) {
+      return { ...DEFAULT_DATA };
+    }
+
+    return {
+      tasks: parseTasks(source.tasks),
+      completionsByDate: parseCompletionsByDate(source.completionsByDate),
+      language: parseLanguage(source.language)
+    };
+  }
+
+  private parseMarkdownData(markdown: string): PlannerData | null {
+    const jsonBlock = markdown.match(/```json\s*([\s\S]*?)\s*```/i);
+    const rawJson = jsonBlock ? jsonBlock[1] : markdown.trim();
+    if (!rawJson) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(rawJson) as unknown;
+      return this.coerceData(parsed);
+    } catch (error) {
+      console.error('Failed to parse S8 Plan Data.md', error);
+      return null;
+    }
+  }
+
+  private serializeMarkdownData(data: PlannerData): string {
+    return `${DATA_FILE_TITLE}\n\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\`\n`;
+  }
+
+  private async readVaultDataFile(): Promise<PlannerData | null> {
+    const existing = this.plugin.app.vault.getAbstractFileByPath(DATA_FILE_PATH);
+    if (!(existing instanceof TFile)) {
+      return null;
+    }
+
+    const markdown = await this.plugin.app.vault.read(existing);
+    return this.parseMarkdownData(markdown);
+  }
+
+  private async writeVaultDataFile(): Promise<void> {
+    const markdown = this.serializeMarkdownData(this.data);
+    const existing = this.plugin.app.vault.getAbstractFileByPath(DATA_FILE_PATH);
+
+    if (existing instanceof TFile) {
+      await this.plugin.app.vault.modify(existing, markdown);
+      return;
+    }
+
+    await this.plugin.app.vault.create(DATA_FILE_PATH, markdown);
   }
 
   private generateTaskId(): string {

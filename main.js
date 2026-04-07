@@ -23,11 +23,15 @@ __export(main_exports, {
   default: () => WeeklyPlannerPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 
 // src/constants.ts
 var VIEW_TYPE_WEEKLY_PLANNER = "weekly-planner-view";
+var DATA_FILE_PATH = "S8 Plan Data.md";
 var WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 7];
+
+// src/store.ts
+var import_obsidian = require("obsidian");
 
 // src/i18n.ts
 var TRANSLATIONS = {
@@ -214,23 +218,100 @@ var DEFAULT_DATA = {
   completionsByDate: {},
   language: "en"
 };
+var DATA_FILE_TITLE = "# S8 Plan Data";
+function isRecord(value) {
+  return typeof value === "object" && value !== null;
+}
+function parseLanguage(value) {
+  return value === "ru" || value === "en" ? value : DEFAULT_DATA.language;
+}
+function parseWeekdays(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const valid = value.filter((day) => typeof day === "number" && Number.isInteger(day) && day >= 1 && day <= 7);
+  return [...new Set(valid)].sort((a, b) => a - b);
+}
+function parseCompletionsByDate(value) {
+  if (!isRecord(value)) {
+    return {};
+  }
+  const result = {};
+  Object.entries(value).forEach(([date, taskIds]) => {
+    if (!Array.isArray(taskIds)) {
+      return;
+    }
+    const validIds = taskIds.filter((id) => typeof id === "string");
+    if (validIds.length > 0) {
+      result[date] = [...new Set(validIds)];
+    }
+  });
+  return result;
+}
+function parseTasks(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const tasks = [];
+  value.forEach((entry, index) => {
+    if (!isRecord(entry)) {
+      return;
+    }
+    const id = typeof entry.id === "string" ? entry.id : "";
+    const title = typeof entry.title === "string" ? entry.title : "";
+    if (!id || !title.trim()) {
+      return;
+    }
+    const task = {
+      id,
+      title: title.trim(),
+      weekdays: parseWeekdays(entry.weekdays),
+      order: typeof entry.order === "number" && Number.isFinite(entry.order) ? entry.order : index
+    };
+    if (typeof entry.createdAt === "string") {
+      task.createdAt = entry.createdAt;
+    }
+    if (typeof entry.archived === "boolean") {
+      task.archived = entry.archived;
+    }
+    tasks.push(task);
+  });
+  return tasks;
+}
+function hasMeaningfulData(data) {
+  return data.tasks.length > 0 || Object.keys(data.completionsByDate).length > 0 || data.language !== DEFAULT_DATA.language;
+}
 var PlannerStore = class {
   constructor(plugin) {
     this.data = { ...DEFAULT_DATA };
     this.plugin = plugin;
   }
   async load() {
-    const loaded = await this.plugin.loadData();
-    this.data = {
-      tasks: Array.isArray(loaded?.tasks) ? loaded?.tasks : [],
-      completionsByDate: loaded?.completionsByDate && typeof loaded.completionsByDate === "object" ? loaded.completionsByDate : {},
-      language: loaded?.language === "ru" || loaded?.language === "en" ? loaded.language : DEFAULT_DATA.language
-    };
+    const vaultData = await this.readVaultDataFile();
+    if (vaultData) {
+      this.data = vaultData;
+      this.normalizeOrders();
+      return;
+    }
+    const legacyLoaded = await this.plugin.loadData();
+    const legacyData = this.coerceData(legacyLoaded);
+    this.data = legacyData;
     this.normalizeOrders();
-    await this.save();
+    if (hasMeaningfulData(this.data)) {
+      await this.writeVaultDataFile();
+    }
   }
   async save() {
-    await this.plugin.saveData(this.data);
+    await this.writeVaultDataFile();
+  }
+  async reloadFromDataFile() {
+    const vaultData = await this.readVaultDataFile();
+    if (!vaultData) {
+      return false;
+    }
+    this.data = vaultData;
+    this.normalizeOrders();
+    return true;
   }
   getTasks() {
     return [...this.data.tasks].sort((a, b) => a.order - b.order);
@@ -398,6 +479,55 @@ var PlannerStore = class {
     const percent = planned === 0 ? 0 : Math.round(completed / planned * 100);
     return { planned, completed, percent };
   }
+  coerceData(source) {
+    if (!isRecord(source)) {
+      return { ...DEFAULT_DATA };
+    }
+    return {
+      tasks: parseTasks(source.tasks),
+      completionsByDate: parseCompletionsByDate(source.completionsByDate),
+      language: parseLanguage(source.language)
+    };
+  }
+  parseMarkdownData(markdown) {
+    const jsonBlock = markdown.match(/```json\s*([\s\S]*?)\s*```/i);
+    const rawJson = jsonBlock ? jsonBlock[1] : markdown.trim();
+    if (!rawJson) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(rawJson);
+      return this.coerceData(parsed);
+    } catch (error) {
+      console.error("Failed to parse S8 Plan Data.md", error);
+      return null;
+    }
+  }
+  serializeMarkdownData(data) {
+    return `${DATA_FILE_TITLE}
+
+\`\`\`json
+${JSON.stringify(data, null, 2)}
+\`\`\`
+`;
+  }
+  async readVaultDataFile() {
+    const existing = this.plugin.app.vault.getAbstractFileByPath(DATA_FILE_PATH);
+    if (!(existing instanceof import_obsidian.TFile)) {
+      return null;
+    }
+    const markdown = await this.plugin.app.vault.read(existing);
+    return this.parseMarkdownData(markdown);
+  }
+  async writeVaultDataFile() {
+    const markdown = this.serializeMarkdownData(this.data);
+    const existing = this.plugin.app.vault.getAbstractFileByPath(DATA_FILE_PATH);
+    if (existing instanceof import_obsidian.TFile) {
+      await this.plugin.app.vault.modify(existing, markdown);
+      return;
+    }
+    await this.plugin.app.vault.create(DATA_FILE_PATH, markdown);
+  }
   generateTaskId() {
     return `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
@@ -411,8 +541,8 @@ var PlannerStore = class {
 };
 
 // src/settings.ts
-var import_obsidian = require("obsidian");
-var PlannerSettingTab = class extends import_obsidian.PluginSettingTab {
+var import_obsidian2 = require("obsidian");
+var PlannerSettingTab = class extends import_obsidian2.PluginSettingTab {
   constructor(plugin) {
     super(plugin.app, plugin);
     this.plugin = plugin;
@@ -421,10 +551,10 @@ var PlannerSettingTab = class extends import_obsidian.PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     const language = this.plugin.store.getLanguage();
-    new import_obsidian.Setting(containerEl).setName(t(language, "weeklyPlannerSettings")).setHeading();
+    new import_obsidian2.Setting(containerEl).setName(t(language, "weeklyPlannerSettings")).setHeading();
     this.renderLanguageSetting(containerEl, language);
     this.renderCreateTask(containerEl, language);
-    new import_obsidian.Setting(containerEl).setName(t(language, "tasks")).setHeading();
+    new import_obsidian2.Setting(containerEl).setName(t(language, "tasks")).setHeading();
     const tasks = this.plugin.store.getTasks();
     if (tasks.length === 0) {
       containerEl.createDiv({ cls: "wp-empty", text: t(language, "noTasksYet") });
@@ -443,7 +573,7 @@ var PlannerSettingTab = class extends import_obsidian.PluginSettingTab {
     this.display();
   }
   renderLanguageSetting(containerEl, language) {
-    new import_obsidian.Setting(containerEl).setName(t(language, "language")).setDesc(t(language, "languageDescription")).addDropdown((dropdown) => {
+    new import_obsidian2.Setting(containerEl).setName(t(language, "language")).setDesc(t(language, "languageDescription")).addDropdown((dropdown) => {
       dropdown.addOption("en", t(language, "english"));
       dropdown.addOption("ru", t(language, "russian"));
       dropdown.setValue(language);
@@ -458,8 +588,8 @@ var PlannerSettingTab = class extends import_obsidian.PluginSettingTab {
   renderCreateTask(containerEl, language) {
     let draftTitle = "";
     let draftWeekdays = [];
-    new import_obsidian.Setting(containerEl).setName(t(language, "createTask")).setHeading();
-    new import_obsidian.Setting(containerEl).setName(t(language, "taskTitle")).addText(
+    new import_obsidian2.Setting(containerEl).setName(t(language, "createTask")).setHeading();
+    new import_obsidian2.Setting(containerEl).setName(t(language, "taskTitle")).addText(
       (text) => text.setPlaceholder(t(language, "taskTitlePlaceholder")).onChange((value) => {
         draftTitle = value;
       })
@@ -477,7 +607,7 @@ var PlannerSettingTab = class extends import_obsidian.PluginSettingTab {
         }
       });
     });
-    new import_obsidian.Setting(containerEl).setName(t(language, "actions")).addButton(
+    new import_obsidian2.Setting(containerEl).setName(t(language, "actions")).addButton(
       (button) => button.setButtonText(t(language, "addTask")).onClick(() => {
         this.runAsync(async () => {
           await this.plugin.store.addTask(draftTitle, draftWeekdays);
@@ -491,7 +621,7 @@ var PlannerSettingTab = class extends import_obsidian.PluginSettingTab {
     const card = containerEl.createDiv({ cls: "wp-settings-task" });
     let draftTitle = task.title;
     let draftWeekdays = [...task.weekdays];
-    new import_obsidian.Setting(card).setName(t(language, "taskTitle")).addText(
+    new import_obsidian2.Setting(card).setName(t(language, "taskTitle")).addText(
       (text) => text.setValue(task.title).onChange((value) => {
         draftTitle = value;
       })
@@ -554,7 +684,7 @@ var PlannerSettingTab = class extends import_obsidian.PluginSettingTab {
 };
 
 // src/view.ts
-var import_obsidian2 = require("obsidian");
+var import_obsidian3 = require("obsidian");
 
 // src/components/header.ts
 function renderPlannerHeader(container, stats, handlers) {
@@ -678,7 +808,7 @@ function renderYearOverview(container, input) {
 }
 
 // src/view.ts
-var WeeklyPlannerView = class extends import_obsidian2.ItemView {
+var WeeklyPlannerView = class extends import_obsidian3.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.mode = "week";
@@ -836,7 +966,7 @@ var WeeklyPlannerView = class extends import_obsidian2.ItemView {
 };
 
 // src/main.ts
-var WeeklyPlannerPlugin = class extends import_obsidian3.Plugin {
+var WeeklyPlannerPlugin = class extends import_obsidian4.Plugin {
   constructor(app, manifest) {
     super(app, manifest);
     this.viewType = VIEW_TYPE_WEEKLY_PLANNER;
@@ -857,6 +987,7 @@ var WeeklyPlannerPlugin = class extends import_obsidian3.Plugin {
       }
     });
     this.addSettingTab(new PlannerSettingTab(this));
+    this.registerDataFileSyncEvents();
   }
   onunload() {
   }
@@ -865,7 +996,7 @@ var WeeklyPlannerPlugin = class extends import_obsidian3.Plugin {
     const workspace = this.app.workspace;
     const leaf = workspace.getLeaf("tab");
     if (!leaf) {
-      new import_obsidian3.Notice(t(language, "couldNotCreatePlannerTab"));
+      new import_obsidian4.Notice(t(language, "couldNotCreatePlannerTab"));
       return;
     }
     try {
@@ -877,7 +1008,7 @@ var WeeklyPlannerPlugin = class extends import_obsidian3.Plugin {
     } catch (error) {
       console.error("Failed to open weekly planner view", error);
       const details = error instanceof Error ? error.message : String(error);
-      new import_obsidian3.Notice(t(language, "couldNotOpenWeeklyPlannerView", { details }));
+      new import_obsidian4.Notice(t(language, "couldNotOpenWeeklyPlannerView", { details }));
     }
   }
   refreshViews() {
@@ -887,6 +1018,52 @@ var WeeklyPlannerPlugin = class extends import_obsidian3.Plugin {
       if (view instanceof WeeklyPlannerView) {
         view.refresh();
       }
+    });
+  }
+  registerDataFileSyncEvents() {
+    this.registerEvent(
+      this.app.vault.on("modify", (file) => {
+        if (!this.isDataFile(file)) {
+          return;
+        }
+        this.syncFromDataFile();
+      })
+    );
+    this.registerEvent(
+      this.app.vault.on("create", (file) => {
+        if (!this.isDataFile(file)) {
+          return;
+        }
+        this.syncFromDataFile();
+      })
+    );
+    this.registerEvent(
+      this.app.vault.on("rename", (file, oldPath) => {
+        if (oldPath !== DATA_FILE_PATH && !this.isDataFile(file)) {
+          return;
+        }
+        this.syncFromDataFile();
+      })
+    );
+    this.registerEvent(
+      this.app.vault.on("delete", (file) => {
+        if (!this.isDataFile(file)) {
+          return;
+        }
+        this.syncFromDataFile();
+      })
+    );
+  }
+  isDataFile(file) {
+    return file?.path === DATA_FILE_PATH;
+  }
+  syncFromDataFile() {
+    void this.store.reloadFromDataFile().then((loaded) => {
+      if (loaded) {
+        this.refreshViews();
+      }
+    }).catch((error) => {
+      console.error("Failed to sync planner data from S8 Plan Data.md", error);
     });
   }
 };

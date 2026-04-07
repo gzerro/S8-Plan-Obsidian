@@ -83,10 +83,11 @@ npm run build
 
 ## Data storage
 
-The plugin stores data locally via Obsidian API:
+The plugin stores planner data in a Markdown file in the vault root:
 
-- `Plugin.loadData()`
-- `Plugin.saveData()`
+- `S8 Plan Data.md`
+
+Inside that file, data is saved as JSON in a `json` code block.
 
 Stored data includes:
 
@@ -94,7 +95,11 @@ Stored data includes:
 - date-based completion map;
 - selected interface language.
 
-Obsidian creates the plugin data file automatically (`data.json`).
+Migration behavior:
+
+- if `S8 Plan Data.md` already exists, it is used as the source of truth;
+- if it does not exist, the plugin tries to migrate legacy data from `.obsidian/plugins/s8-plan/data.json`;
+- after migration, the plugin writes to `S8 Plan Data.md`.
 
 ## Development
 

@@ -1,5 +1,5 @@
-import { App, Notice, Plugin, PluginManifest } from 'obsidian';
-import { VIEW_TYPE_WEEKLY_PLANNER } from './constants';
+import { App, Notice, Plugin, PluginManifest, TAbstractFile } from 'obsidian';
+import { DATA_FILE_PATH, VIEW_TYPE_WEEKLY_PLANNER } from './constants';
 import { PlannerStore } from './store';
 import { PlannerSettingTab } from './settings';
 import { WeeklyPlannerView } from './view';
@@ -33,6 +33,7 @@ export default class WeeklyPlannerPlugin extends Plugin {
     });
 
     this.addSettingTab(new PlannerSettingTab(this));
+    this.registerDataFileSyncEvents();
   }
 
   onunload(): void {
@@ -69,5 +70,60 @@ export default class WeeklyPlannerPlugin extends Plugin {
         view.refresh();
       }
     });
+  }
+
+  private registerDataFileSyncEvents(): void {
+    this.registerEvent(
+      this.app.vault.on('modify', (file) => {
+        if (!this.isDataFile(file)) {
+          return;
+        }
+        this.syncFromDataFile();
+      })
+    );
+
+    this.registerEvent(
+      this.app.vault.on('create', (file) => {
+        if (!this.isDataFile(file)) {
+          return;
+        }
+        this.syncFromDataFile();
+      })
+    );
+
+    this.registerEvent(
+      this.app.vault.on('rename', (file, oldPath) => {
+        if (oldPath !== DATA_FILE_PATH && !this.isDataFile(file)) {
+          return;
+        }
+        this.syncFromDataFile();
+      })
+    );
+
+    this.registerEvent(
+      this.app.vault.on('delete', (file) => {
+        if (!this.isDataFile(file)) {
+          return;
+        }
+        this.syncFromDataFile();
+      })
+    );
+  }
+
+  private isDataFile(file: TAbstractFile | null): boolean {
+    return file?.path === DATA_FILE_PATH;
+  }
+
+  private syncFromDataFile(): void {
+    void this.store
+      .reloadFromDataFile()
+      .then((loaded) => {
+        if (loaded) {
+          this.refreshViews();
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to sync planner data from S8 Plan Data.md', error);
+      });
   }
 }

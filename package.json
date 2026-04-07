@@ -1,6 +1,6 @@
 {
   "name": "s8-plan",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Mobile-first weekly planner Obsidian plugin",
   "main": "main.js",
   "scripts": {
