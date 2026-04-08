@@ -523,6 +523,19 @@ ${JSON.stringify(data, null, 2)}
   getAllPlannerDataFiles() {
     return this.plugin.app.vault.getMarkdownFiles().filter((file) => this.isPlannerDataPath(file.path));
   }
+  getDuplicatePlannerDataFiles() {
+    return this.getAllPlannerDataFiles().filter((file) => file.path !== DATA_FILE_PATH);
+  }
+  async removeDuplicateDataFiles() {
+    const duplicates = this.getDuplicatePlannerDataFiles();
+    for (const duplicate of duplicates) {
+      try {
+        await this.plugin.app.vault.delete(duplicate, true);
+      } catch (error) {
+        console.error("Failed to delete duplicate planner data file", duplicate.path, error);
+      }
+    }
+  }
   async readVaultDataFile() {
     const files = this.getAllPlannerDataFiles().sort((a, b) => b.stat.mtime - a.stat.mtime);
     if (files.length === 0) {
@@ -534,9 +547,9 @@ ${JSON.stringify(data, null, 2)}
       if (!parsed) {
         continue;
       }
-      if (file.path !== DATA_FILE_PATH) {
-        await this.writeVaultDataMarkdown(this.serializeMarkdownData(parsed));
-      }
+      const normalized = this.serializeMarkdownData(parsed);
+      await this.writeVaultDataMarkdown(normalized);
+      await this.removeDuplicateDataFiles();
       return parsed;
     }
     return null;
@@ -544,6 +557,7 @@ ${JSON.stringify(data, null, 2)}
   async writeVaultDataFile() {
     const markdown = this.serializeMarkdownData(this.data);
     await this.writeVaultDataMarkdown(markdown);
+    await this.removeDuplicateDataFiles();
   }
   async writeVaultDataMarkdown(markdown) {
     const existing = this.plugin.app.vault.getAbstractFileByPath(DATA_FILE_PATH);

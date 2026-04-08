@@ -381,6 +381,21 @@ export class PlannerStore {
     return this.plugin.app.vault.getMarkdownFiles().filter((file) => this.isPlannerDataPath(file.path));
   }
 
+  private getDuplicatePlannerDataFiles(): TFile[] {
+    return this.getAllPlannerDataFiles().filter((file) => file.path !== DATA_FILE_PATH);
+  }
+
+  private async removeDuplicateDataFiles(): Promise<void> {
+    const duplicates = this.getDuplicatePlannerDataFiles();
+    for (const duplicate of duplicates) {
+      try {
+        await this.plugin.app.vault.delete(duplicate, true);
+      } catch (error) {
+        console.error('Failed to delete duplicate planner data file', duplicate.path, error);
+      }
+    }
+  }
+
   private async readVaultDataFile(): Promise<PlannerData | null> {
     const files = this.getAllPlannerDataFiles().sort((a, b) => b.stat.mtime - a.stat.mtime);
     if (files.length === 0) {
@@ -394,10 +409,9 @@ export class PlannerStore {
         continue;
       }
 
-      if (file.path !== DATA_FILE_PATH) {
-        await this.writeVaultDataMarkdown(this.serializeMarkdownData(parsed));
-      }
-
+      const normalized = this.serializeMarkdownData(parsed);
+      await this.writeVaultDataMarkdown(normalized);
+      await this.removeDuplicateDataFiles();
       return parsed;
     }
 
@@ -407,6 +421,7 @@ export class PlannerStore {
   private async writeVaultDataFile(): Promise<void> {
     const markdown = this.serializeMarkdownData(this.data);
     await this.writeVaultDataMarkdown(markdown);
+    await this.removeDuplicateDataFiles();
   }
 
   private async writeVaultDataMarkdown(markdown: string): Promise<void> {
