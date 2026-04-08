@@ -219,6 +219,7 @@ var DEFAULT_DATA = {
   language: "en"
 };
 var DATA_FILE_TITLE = "# S8 Plan Data";
+var DATA_FILE_NAME_PATTERN = /^S8 Plan Data(?: \(\d+\))?\.md$/i;
 function isRecord(value) {
   return typeof value === "object" && value !== null;
 }
@@ -285,6 +286,14 @@ var PlannerStore = class {
   constructor(plugin) {
     this.data = { ...DEFAULT_DATA };
     this.plugin = plugin;
+  }
+  isPlannerDataPath(path) {
+    if (!path) {
+      return false;
+    }
+    const slash = path.lastIndexOf("/");
+    const fileName = slash >= 0 ? path.slice(slash + 1) : path;
+    return DATA_FILE_NAME_PATTERN.test(fileName);
   }
   async load() {
     const vaultData = await this.readVaultDataFile();
@@ -511,18 +520,38 @@ ${JSON.stringify(data, null, 2)}
 \`\`\`
 `;
   }
+  getAllPlannerDataFiles() {
+    return this.plugin.app.vault.getMarkdownFiles().filter((file) => this.isPlannerDataPath(file.path));
+  }
   async readVaultDataFile() {
-    const existing = this.plugin.app.vault.getAbstractFileByPath(DATA_FILE_PATH);
-    if (!(existing instanceof import_obsidian.TFile)) {
+    const files = this.getAllPlannerDataFiles().sort((a, b) => b.stat.mtime - a.stat.mtime);
+    if (files.length === 0) {
       return null;
     }
-    const markdown = await this.plugin.app.vault.read(existing);
-    return this.parseMarkdownData(markdown);
+    for (const file of files) {
+      const markdown = await this.plugin.app.vault.read(file);
+      const parsed = this.parseMarkdownData(markdown);
+      if (!parsed) {
+        continue;
+      }
+      if (file.path !== DATA_FILE_PATH) {
+        await this.writeVaultDataMarkdown(this.serializeMarkdownData(parsed));
+      }
+      return parsed;
+    }
+    return null;
   }
   async writeVaultDataFile() {
     const markdown = this.serializeMarkdownData(this.data);
+    await this.writeVaultDataMarkdown(markdown);
+  }
+  async writeVaultDataMarkdown(markdown) {
     const existing = this.plugin.app.vault.getAbstractFileByPath(DATA_FILE_PATH);
     if (existing instanceof import_obsidian.TFile) {
+      const current = await this.plugin.app.vault.read(existing);
+      if (current === markdown) {
+        return;
+      }
       await this.plugin.app.vault.modify(existing, markdown);
       return;
     }
@@ -1023,7 +1052,7 @@ var WeeklyPlannerPlugin = class extends import_obsidian4.Plugin {
   registerDataFileSyncEvents() {
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
-        if (!this.isDataFile(file)) {
+        if (!this.store.isPlannerDataPath(file.path)) {
           return;
         }
         this.syncFromDataFile();
@@ -1031,7 +1060,7 @@ var WeeklyPlannerPlugin = class extends import_obsidian4.Plugin {
     );
     this.registerEvent(
       this.app.vault.on("create", (file) => {
-        if (!this.isDataFile(file)) {
+        if (!this.store.isPlannerDataPath(file.path)) {
           return;
         }
         this.syncFromDataFile();
@@ -1039,7 +1068,7 @@ var WeeklyPlannerPlugin = class extends import_obsidian4.Plugin {
     );
     this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
-        if (oldPath !== DATA_FILE_PATH && !this.isDataFile(file)) {
+        if (!this.store.isPlannerDataPath(oldPath) && !this.store.isPlannerDataPath(file.path)) {
           return;
         }
         this.syncFromDataFile();
@@ -1047,15 +1076,12 @@ var WeeklyPlannerPlugin = class extends import_obsidian4.Plugin {
     );
     this.registerEvent(
       this.app.vault.on("delete", (file) => {
-        if (!this.isDataFile(file)) {
+        if (!this.store.isPlannerDataPath(file.path)) {
           return;
         }
         this.syncFromDataFile();
       })
     );
-  }
-  isDataFile(file) {
-    return file?.path === DATA_FILE_PATH;
   }
   syncFromDataFile() {
     void this.store.reloadFromDataFile().then((loaded) => {

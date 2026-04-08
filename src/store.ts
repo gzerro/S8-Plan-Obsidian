@@ -11,6 +11,7 @@ const DEFAULT_DATA: PlannerData = {
 };
 
 const DATA_FILE_TITLE = '# S8 Plan Data';
+const DATA_FILE_NAME_PATTERN = /^S8 Plan Data(?: \(\d+\))?\.md$/i;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -97,6 +98,16 @@ export class PlannerStore {
 
   constructor(plugin: WeeklyPlannerPlugin) {
     this.plugin = plugin;
+  }
+
+  isPlannerDataPath(path: string): boolean {
+    if (!path) {
+      return false;
+    }
+
+    const slash = path.lastIndexOf('/');
+    const fileName = slash >= 0 ? path.slice(slash + 1) : path;
+    return DATA_FILE_NAME_PATTERN.test(fileName);
   }
 
   async load(): Promise<void> {
@@ -366,21 +377,46 @@ export class PlannerStore {
     return `${DATA_FILE_TITLE}\n\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\`\n`;
   }
 
+  private getAllPlannerDataFiles(): TFile[] {
+    return this.plugin.app.vault.getMarkdownFiles().filter((file) => this.isPlannerDataPath(file.path));
+  }
+
   private async readVaultDataFile(): Promise<PlannerData | null> {
-    const existing = this.plugin.app.vault.getAbstractFileByPath(DATA_FILE_PATH);
-    if (!(existing instanceof TFile)) {
+    const files = this.getAllPlannerDataFiles().sort((a, b) => b.stat.mtime - a.stat.mtime);
+    if (files.length === 0) {
       return null;
     }
 
-    const markdown = await this.plugin.app.vault.read(existing);
-    return this.parseMarkdownData(markdown);
+    for (const file of files) {
+      const markdown = await this.plugin.app.vault.read(file);
+      const parsed = this.parseMarkdownData(markdown);
+      if (!parsed) {
+        continue;
+      }
+
+      if (file.path !== DATA_FILE_PATH) {
+        await this.writeVaultDataMarkdown(this.serializeMarkdownData(parsed));
+      }
+
+      return parsed;
+    }
+
+    return null;
   }
 
   private async writeVaultDataFile(): Promise<void> {
     const markdown = this.serializeMarkdownData(this.data);
+    await this.writeVaultDataMarkdown(markdown);
+  }
+
+  private async writeVaultDataMarkdown(markdown: string): Promise<void> {
     const existing = this.plugin.app.vault.getAbstractFileByPath(DATA_FILE_PATH);
 
     if (existing instanceof TFile) {
+      const current = await this.plugin.app.vault.read(existing);
+      if (current === markdown) {
+        return;
+      }
       await this.plugin.app.vault.modify(existing, markdown);
       return;
     }

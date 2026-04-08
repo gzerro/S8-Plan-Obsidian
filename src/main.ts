@@ -1,5 +1,5 @@
-import { App, Notice, Plugin, PluginManifest, TAbstractFile } from 'obsidian';
-import { DATA_FILE_PATH, VIEW_TYPE_WEEKLY_PLANNER } from './constants';
+import { App, Notice, Plugin, PluginManifest } from 'obsidian';
+import { VIEW_TYPE_WEEKLY_PLANNER } from './constants';
 import { PlannerStore } from './store';
 import { PlannerSettingTab } from './settings';
 import { WeeklyPlannerView } from './view';
@@ -75,7 +75,7 @@ export default class WeeklyPlannerPlugin extends Plugin {
   private registerDataFileSyncEvents(): void {
     this.registerEvent(
       this.app.vault.on('modify', (file) => {
-        if (!this.isDataFile(file)) {
+        if (!this.store.isPlannerDataPath(file.path)) {
           return;
         }
         this.syncFromDataFile();
@@ -84,7 +84,7 @@ export default class WeeklyPlannerPlugin extends Plugin {
 
     this.registerEvent(
       this.app.vault.on('create', (file) => {
-        if (!this.isDataFile(file)) {
+        if (!this.store.isPlannerDataPath(file.path)) {
           return;
         }
         this.syncFromDataFile();
@@ -93,7 +93,7 @@ export default class WeeklyPlannerPlugin extends Plugin {
 
     this.registerEvent(
       this.app.vault.on('rename', (file, oldPath) => {
-        if (oldPath !== DATA_FILE_PATH && !this.isDataFile(file)) {
+        if (!this.store.isPlannerDataPath(oldPath) && !this.store.isPlannerDataPath(file.path)) {
           return;
         }
         this.syncFromDataFile();
@@ -102,16 +102,12 @@ export default class WeeklyPlannerPlugin extends Plugin {
 
     this.registerEvent(
       this.app.vault.on('delete', (file) => {
-        if (!this.isDataFile(file)) {
+        if (!this.store.isPlannerDataPath(file.path)) {
           return;
         }
         this.syncFromDataFile();
       })
     );
-  }
-
-  private isDataFile(file: TAbstractFile | null): boolean {
-    return file?.path === DATA_FILE_PATH;
   }
 
   private syncFromDataFile(): void {
